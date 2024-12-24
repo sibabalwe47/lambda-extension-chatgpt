@@ -1,0 +1,2 @@
+#!/bin/bash
+node "/opt/aws-lambda-chatgpt-observability/index.js"

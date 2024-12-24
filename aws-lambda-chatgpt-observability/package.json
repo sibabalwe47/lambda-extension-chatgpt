@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "cd /opt/aws-lambda-chatgpt-observability/ && node index.js"
   },
   "keywords": [],
   "author": "Siba N.",
