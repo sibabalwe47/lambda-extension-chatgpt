@@ -18,7 +18,6 @@ jobs:
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ASSUME_ROLE: ${{ vars.AWS_ASSUME_ROLE }}
-      STAGE: test
     permissions:
       contents: read
       id-token: write
