@@ -1,0 +1,168 @@
+name: "Lambda Extension - publish release to test environment."
+
+on:
+  push:
+    branches:
+      - "feature/**"
+    paths:
+      - "aws-lambda-chatgpt-observability/**"
+      - ".github/**"
+
+jobs:
+  deploy_to_test:
+    if: ${{ startsWith(github.ref_name, 'feature/') }}
+    name: Deploy to AWS Account
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ASSUME_ROLE: ${{ vars.AWS_ASSUME_ROLE }}
+      STAGE: test
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ASSUME_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account Number
+        id: account_number
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          echo "AWS Account ID: $ACCOUNT_ID"
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: |
+          cd aws-lambda-chatgpt-observability/aws-lambda-chatgpt-observability
+          npm install
+
+      - run: |
+          cd aws-lambda-chatgpt-observability
+          zip -r extensions.zip .
+
+      - run: |
+          if [ ! -f "aws-lambda-chatgpt-observability/extensions.zip" ]; then
+            echo "Error: extensions.zip file not found."
+            exit 1
+          fi
+
+      - run: |
+          cd aws-lambda-chatgpt-observability
+          aws s3 cp extensions.zip s3://${{ vars.S3_STORAGE_BUCKET }}/extensions.zip
+
+      # - name: Upgrade the layer version
+      #   id: lambda-layer-version
+      #   run: |
+      #     aws lambda publish-layer-version \
+      #     --layer-name ${{ vars.APPD_LAMBDA_LAYER_NAME }} \
+      #     --content S3Bucket=${{ vars.S3_STORAGE_BUCKET }},S3Key=extensions.zip \
+      #     --output json > publish_output.json
+
+      #     Version=$(jq -r '.Version' publish_output.json)
+      #     echo "Version=$Version" >> $GITHUB_OUTPUT
+
+      # - name: Integrate new layer version with Lambda
+      #   run: |
+      #     # Step 1: Get the current environment variables
+      #     aws lambda get-function-configuration \
+      #       --function-name ${{ vars.LAMBDA_FUNCTION_NAME }} \
+      #       --query "Environment.Variables" > current_env.json
+
+      #     # Step 2: Add the new environment variable using jq (merge with existing ones)
+      #     NEW_VAR="APPDYNAMICS_METRICS_QUEUE=https://sqs.${{ secrets.AWS_REGION }}.amazonaws.com/${{ steps.account_number.outputs.account_id }}/af-south-1-vfs-opf-dev-appdynamics-metrics-queue"
+      #     jq --arg key "$(echo $NEW_VAR | cut -d= -f1)" \
+      #       --arg value "$(echo $NEW_VAR | cut -d= -f2)" \
+      #       '. + {($key): $value}' current_env.json > updated_env.json
+
+      #     # Step 3: Format the environment variables correctly for AWS CLI
+      #     ENV_VARS=$(cat updated_env.json | jq -r 'to_entries | map("\(.key)=\(.value)") | join(",")')
+
+      #     # Step 4: Update the Lambda function configuration with the new environment variables
+      #     aws lambda update-function-configuration \
+      #       --function-name ${{ vars.LAMBDA_FUNCTION_NAME }} \
+      #       --environment "Variables={$ENV_VARS}" \
+      #       --layers arn:aws:lambda:${{ secrets.AWS_REGION }}:${{ steps.account_number.outputs.account_id }}:layer:${{ vars.APPD_LAMBDA_LAYER_NAME }}:${{ steps.lambda-layer-version.outputs.Version }}
+
+      # - name: Invoke lambda for testing
+      #   run: |
+      #     for i in {1..5}; do
+      #       aws lambda invoke --function-name ${{ vars.LAMBDA_FUNCTION_NAME }} lambda$i.txt
+      #     done
+
+  # deploy_dev:
+  #   if: ${{ github.ref_name == 'dev' }}
+  #   name: Deploy to dev (CA)
+  #   runs-on: ubuntu-latest
+  #   environment:
+  #     name: development
+  #   env:
+  #     AWS_REGION: ${{ secrets.AWS_REGION }}
+  #     OPF_AWS_ASSUME_ROLE: ${{ vars.OPF_AWS_ASSUME_ROLE }}
+  #     CA_AWS_ASSUME_ROLE: ${{ vars.CA_AWS_ASSUME_ROLE }}
+
+  #     STAGE: development
+  #   permissions:
+  #     contents: write
+  #     id-token: write
+  #   steps:
+  #     - name: Authenticate to OPF
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         role-to-assume: ${{ env.OPF_AWS_ASSUME_ROLE }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Get extension zip file from ${{ vars.S3_STORAGE_BUCKET }} bucket
+  #       run: |
+  #         aws s3 cp s3://${{ vars.S3_STORAGE_BUCKET }}/extensions.zip .
+
+  #     - name: Authenticate to CA to upload extension
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         role-to-assume: ${{ env.CA_AWS_ASSUME_ROLE }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Get AWS Account Number
+  #       id: account_number
+  #       run: |
+  #         ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+  #         echo "AWS Account ID: $ACCOUNT_ID"
+  #         echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+  #     - name: Upgrade the layer version
+  #       id: lambda-layer-version
+  #       run: |
+  #         aws lambda publish-layer-version \
+  #         --layer-name ${{ vars.APPD_LAMBDA_LAYER_NAME }} \
+  #         --zip-file fileb://extensions.zip \
+  #         --output json > publish_output.json
+
+  #         Version=$(jq -r '.Version' publish_output.json)
+  #         echo "Version=$Version" >> $GITHUB_OUTPUT
+
+  #     - name: Integrate VA lambdas with latest version
+  #       id: lambda-functions
+  #       run: |
+  #         aws lambda list-functions \
+  #           --region ${{ env.AWS_REGION }} \
+  #           --query "Functions[?starts_with(FunctionName, 'af-south-1-vfs-cashadvance-dev')].FunctionName" \
+  #           --output json > functions.json
+
+  #           echo "Total functions: $(jq '. | length' functions.json)"
+
+  #     - name: Update lambda configuration for VA lambdas
+  #       run: |
+  #         echo "Updating Lambda layers for each function"
+  #         jq -r '.[]' functions.json | while read -r FUNCTION_NAME; do
+  #          aws lambda update-function-configuration \
+  #             --function-name "$FUNCTION_NAME" \
+  #             --layers arn:aws:lambda:${{ secrets.AWS_REGION }}:${{ steps.account_number.outputs.account_id }}:layer:${{ vars.APPD_LAMBDA_LAYER_NAME }}:${{ steps.lambda-layer-version.outputs.Version }}
+  #         done
